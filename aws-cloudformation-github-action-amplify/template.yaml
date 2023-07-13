@@ -1,0 +1,770 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+
+Description: >
+  Backend Repo For Account Automation
+
+Parameters:
+  MaxMessageSizeForQueue:
+    Type: Number
+    Default: 262144
+  # QueueURI:
+  #   Type: String
+#    Default: /E3L7240A9I39B6/account-automation-queue-uri
+  # EventBusName:
+  #   Type: String
+#    Default: /E3L7240A9I39B6/account-automation-eventbridge-eventbus-name
+  #
+  # Allows selecting different values based on the environment being deployed to
+  DeployEnvironment:
+    Type: String
+    AllowedValues:
+      - 'dev'
+      - 'qa'
+      - 'prod'
+    Default: dev
+  AccountAutomationProcessorS3BucketName:
+    Type: String
+    Description: Enter a unique name for the S3 bucket
+    Default: 'myaccount-automation-bucket-nguanv'
+  AccountAutomationGlueJobName:
+    Type: String
+    Description: Enter a unique name for the Glue job
+    Default: 'InfoHubDataProcessorGlueJob'
+  AvailabilityZone:
+    Type: String
+    Description: Name of AZ
+    Default: 'us-east-2b'
+    AllowedValues:
+      - 'us-east-2b'
+      - 'us-east-2c'
+      - 'us-east-2d'
+  # DatabaseSecretName:
+  #   Type: String
+  #   Description: Database secret name in AWS Secrets Manager
+#    Default: 'awsrds-gdm-aurora-pgsql-accma-qa-cluster'
+  # InfoHubDatabaseSecretName:
+  #   Type: String
+  #   Description: InfoHub Database secret name in AWS Secrets Manager
+#    Default: 'account_auto_infohub_dev_db'
+  # ScriptLocationAccm:
+  #   Type: String
+  #   Description: Glue Job Script Path in s3
+#  SecurityGroup:
+#    Type: AWS::EC2::SecurityGroup::Id
+#    Description: "A list of SecurityGroupID's "
+#  Subnet1:
+#   Type: AWS::EC2::Subnet::Id
+#    Description: "Enter the subnet the connection will be using "
+#  Subnet2:
+#    Type: AWS::EC2::Subnet::Id
+#    Description: "Enter the subnet the connection will be using "
+#  Subnet3:
+#    Type: AWS::EC2::Subnet::Id
+#    Description: "Enter the subnet the connection will be using "
+  CostCenter:
+    Type: String
+    Default: central
+  CostCenterApprover:
+    Type: String
+    Default: an
+  SystemOwner:
+    Type: String
+    Default: an
+  SystemCustodian:
+    Type: String
+    Default: an
+  PrimaryItContact:
+    Type: String
+    Default: an
+  Level1BusinessArea:
+    Type: String
+    Default: an
+  DataClassification:
+    Type: String
+    AllowedValues:
+      - 'Green'
+      - 'Yellow'
+      - 'Orange'
+      - 'Red'
+      - 'TBD'
+    Default: Green
+  Hipaa:
+    Type: String
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+      - 'TBD'
+    Default: 'No'
+  SenderEmail:
+    Type: String
+    Default: 'test@amz.com'
+  VeevaAccountRequestorEmail:
+    Type: String
+    Default: 'test@amz.com'
+  Subnet1:
+    Type: String
+    Default: subnet-68438515
+  Subnet2:
+    Type: String
+    Default: subnet-25406969
+  Subnet3:
+    Type: String
+    Default: subnet-7b52da10
+  SecurityGroup1:
+    Type: String
+    Default: sg-0bfd53ae1fce7baf4
+  # SecurityGroup2:
+  #   Type: String
+  # SecurityGroup3:
+  #   Type: String
+  # SecurityGroup4:
+  #   Type: String
+
+#  CirrusS3URL:
+#    Type: String
+
+Globals:
+  Function:
+    Runtime: nodejs16.x
+    Timeout: 30
+    MemorySize: 1024
+    Tracing: Active
+    Handler: index.lambdaHandler
+    PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+    # Layers:
+    #   - !Ref CommonModuleLayers
+    VpcConfig:
+      SecurityGroupIds:
+        - !Ref SecurityGroup1
+      SubnetIds:
+        - !Ref Subnet1
+        - !Ref Subnet2
+        - !Ref Subnet3
+
+Resources:
+  VeevaProcessorStepFunction:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: veevaProcessorStateMachine/asl.json
+      DefinitionSubstitutions:
+        RoleValidatorLambdaArn: !Ref RoleValidatorLambda
+        TopRoleLogicLambdaArn: !Ref TopRoleLogicLambda
+        SetStatusLambdaArn: !Ref SetStatusHandlerLambda
+        AccountId: !Ref 'AWS::AccountId'
+        AWS_REGION: !Ref 'AWS::Region'
+      Role: !GetAtt StatesExecutionRole.Arn
+
+  DeadLetter:
+    Type: AWS::SQS::Queue
+
+  RawQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      DelaySeconds: 0
+      QueueName: accountAutomationQueue
+      KmsDataKeyReusePeriodSeconds: 60
+      MaximumMessageSize: !Ref MaxMessageSizeForQueue
+      MessageRetentionPeriod: 1209600
+      ReceiveMessageWaitTimeSeconds: 10
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetter.Arn
+        maxReceiveCount: 4
+      VisibilityTimeout: 120
+
+  ApiGatewayAccountConfig:
+    Type: 'AWS::ApiGateway::Account'
+    Properties:
+      CloudWatchRoleArn: !GetAtt 'ApiGatewayLoggingRole.Arn'
+
+  # CommonModuleLayers:
+  #   Type: AWS::Serverless::LayerVersion
+  #   Properties:
+  #     LayerName: 'acc-automation-libs'
+  #     ContentUri: layers/common
+  #     CompatibleRuntimes:
+  #       - nodejs16.x
+
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: ACCMA
+      StageName: !Ref DeployEnvironment
+      TracingEnabled: true
+      MethodSettings:
+        - HttpMethod: '*'
+          MetricsEnabled: true
+          ResourcePath: '/*'
+          DataTraceEnabled: true
+          LoggingLevel: ERROR # Valid options are `INFO` for debugging, or `ERROR`
+      Cors:
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowMethods: "'OPTIONS,GET,POST,PUT,DELETE'"
+        AllowOrigin: "'*'"
+      Auth:
+        AddDefaultAuthorizerToCorsPreflight: false
+        DefaultAuthorizer: CirrusApiAuthorizer
+        Authorizers:
+          CirrusApiAuthorizer:
+            FunctionPayloadType: REQUEST
+            FunctionArn: !GetAtt CirrusAuthenticators.Outputs.ApiAuthFunctionAlias
+            Identity:
+              Headers:
+                - Authorization
+                
+  CirrusAuthenticators:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: https://lly-templates.s3.us-east-2.amazonaws.com/aws-authenticators/cloudformation/v5/v5.0.0.yaml
+      Parameters:
+        LogLevel: WARN
+        ApiAuthExpectedAudience: ''
+        ApiAuthExpectedIssuer: ''
+        EdgeAuthCloudFrontDistributionId: 'UPDATE-LATER-IF-APPLICABLE'
+        PermissionsBoundary: 'TRUE'
+        CostCenter: !Ref CostCenter
+        CostCenterApprover: !Ref CostCenterApprover
+        SystemOwner: !Ref SystemOwner
+        SystemCustodian: !Ref SystemCustodian
+        PrimaryItContact: !Ref PrimaryItContact
+        Level1BusinessArea: !Ref Level1BusinessArea
+        DataClassification: !Ref DataClassification
+        Hipaa: !Ref Hipaa
+
+  CreateTestLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/CreateTestLambda-develop-${AWS::AccountId}'
+      RetentionInDays: 14
+
+  CreateTestLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/unit
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+      Events:
+        testlambda:
+          Type: Api
+          Properties:
+            Path: /getNodeTest
+            Method: post
+            RestApiId: !Ref ApiGateway
+    Policy:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Action:
+            - secretsmanager:ListSecrets
+            - secretsmanager:GetResourcePolicy
+            - secretsmanager:DescribeSecret
+            - secretsmanager:ListSecretVersionIds
+            - secretsmanager:GetSecretValue
+            - ssm:GetParameters
+          Resource: '*'
+
+  MonitorLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/unit
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+      Environment:
+        Variables:
+          EVENT_RULE_NAME: !Ref AccountAutomationEventRule
+          VEEVA_ACCOUNT_REQUESTOR_LAMBDA: !Ref VeevaAccountRequestorLambda
+    Policy:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Action:
+            - secretsmanager:ListSecrets
+            - secretsmanager:GetResourcePolicy
+            - secretsmanager:DescribeSecret
+            - secretsmanager:ListSecretVersionIds
+            - secretsmanager:GetSecretValue
+            - ssm:GetParameters
+            - events:PutRule
+            - events.PutEvents
+            - events.DisableRule
+            - lambda.InvokeFunction
+          Resource: '*'
+
+  QueueProcessorLambdaFunc:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/unit
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+      Environment:
+        Variables:
+          ACCOUNT_PROCESSOR_LAMBDA: !Ref AccountProcessorLambda
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt RawQueue.Arn
+            BatchSize: 10
+            Enabled: true
+    Policy:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Action:
+            - lambda.InvokeFunction
+          Resource: '*'
+
+  AccountRequestorLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/unit
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+      Environment:
+        Variables:
+          # SQS_QUEUE_URI: !Sub '{{resolve:ssm:${QueueURI}:1}}'
+          # EVENT_BUS_NAME: !Sub '{{resolve:ssm:${EventBusName}}}'
+          MONITOR_LAMBDA: !Ref MonitorLambda
+          ACCOUNT_ID: !Ref 'AWS::AccountId'
+          EVENT_RULE_NAME: !Ref AccountAutomationEventRule
+          MAX_MESSAGE_SIZE: !Ref MaxMessageSizeForQueue
+      Events:
+        accountRequestorLambda:
+          Type: Api
+          Properties:
+            Path: /account-requestor
+            Method: get
+            RestApiId: !Ref ApiGateway
+    Policy:
+      Version: '2012-10-17'
+      Statement:
+        - Effect: Allow
+          Action:
+            - sqs:SendMessage
+          Resource: '*'
+        - Effect: Allow
+          Action:
+            - secretsmanager:ListSecrets
+            - secretsmanager:GetResourcePolicy
+            - secretsmanager:DescribeSecret
+            - secretsmanager:ListSecretVersionIds
+            - secretsmanager:GetSecretValue
+            - ssm:GetParameters
+            - events:PutRule
+            - events.PutEvents
+          Resource: '*'
+
+  AccountAutomationEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: AccountAutomationEventBus
+
+  AccountAutomationEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Event rule for account automation'
+      State: 'DISABLED'
+      ScheduleExpression: 'rate(2 minutes)'
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Ref: 'MonitorLambda'
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn:
+        Fn::GetAtt:
+          - 'AccountAutomationEventRule'
+          - 'Arn'
+
+  EmailHandlerLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      Handler: index.lambdaHandler
+      CodeUri: functions/unit
+      Runtime: nodejs16.x
+      Timeout: 30
+      MemorySize: 1024
+      Tracing: Active
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+      Events:
+        emailLambda:
+          Type: Api
+          Properties:
+            Path: /send-email
+            Method: post
+            RestApiId: !Ref ApiGateway
+
+  VeevaAccountRequestorLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      Handler: index.lambdaHandler
+      CodeUri: functions/unit
+      Runtime: nodejs16.x
+      Timeout: 30
+      MemorySize: 1024
+      Tracing: Active
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+      Environment:
+        Variables:
+          EMAIL_HANDLER_LAMBDA: !Ref EmailHandlerLambda
+          SENDER_EMAIL: !Ref SenderEmail
+          VEEVA_ACCOUNT_REQUESTOR_EMAIL: !Ref VeevaAccountRequestorEmail
+      Events:
+        accountRequestorLambda:
+          Type: Api
+          Properties:
+            Path: /veeva-account-requestor
+            Method: get
+            RestApiId: !Ref ApiGateway
+  ListAccountsHandlerLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      Handler: index.listAccounts
+      CodeUri: functions/unit
+      Runtime: nodejs16.x
+      Timeout: 30
+      MemorySize: 1024
+      Tracing: Active
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+      Events:
+        accountRequestorLambda:
+          Type: Api
+          Properties:
+            Path: /list-accounts
+            Method: get
+            RestApiId: !Ref ApiGateway
+
+  AccountProcessorLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      CodeUri: functions/unit
+      Environment:
+        Variables:
+          VEEVA_STEP_FUNCTION: !Ref VeevaProcessorStepFunction
+      Tracing: Active
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+    Policy:
+      - AWSStepFunctionsFullAccess
+
+  RoleValidatorLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      CodeUri: functions/unit
+      Tracing: Active
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+
+  TopRoleLogicLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      CodeUri: functions/unit
+      Tracing: Active
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+
+  NameEmailValidatorHandlerLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      Handler: index.nameEmailValidator
+      CodeUri: functions/unit
+      Runtime: nodejs16.x
+      Timeout: 30
+      MemorySize: 1024
+      Tracing: Active
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+
+  SetStatusHandlerLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      Handler: index.setStatusHandler
+      CodeUri: functions/unit
+      Runtime: nodejs16.x
+      Timeout: 30
+      MemorySize: 1024
+      Tracing: Active
+      Role: !GetAtt AccountAutomationLambdaIAMRole.Arn
+
+  ApiGatewayLoggingRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - 'apigateway.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Path: '/'
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs'
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+
+  AccountAutomationLambdaIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: AWSResourcesAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - events:PutEvents
+                  - events:PutRule
+                  - secretsmanager:ListSecrets
+                  - secretsmanager:GetResourcePolicy
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:ListSecretVersionIds
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameters
+                  - kms:DescribeKey
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - lambda:InvokeFunction
+                  - states:StartExecution
+                  - ses:SendRawEmail
+                  - ses:SendEmail
+                Resource: '*'
+        - PolicyName: LambdaEventBridgePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:PutEvents
+                  - events:PutRule
+                Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/default'
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+                - 's3.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+
+  StatesExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      RoleName: StatesExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - !Sub states.${AWS::Region}.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'lambda:*'
+                  - 'statefunctions:*'
+                  - 'glue:*'
+                  - 'events:*'
+                  - 'states:*'
+                Resource: '*'
+
+  InfohubDataProcessor:
+    Type: 'AWS::StepFunctions::StateMachine'
+    Properties:
+      DefinitionString: !Sub
+        - |-
+          {
+            "Comment": "A Hello World example using an AWS Lambda function",
+            "StartAt": "HelloWorld",
+            "States": {
+              "HelloWorld": {
+                "Type": "Task",
+                "Resource": "${lambdaArn}",
+                "End": true
+              }
+            }
+          }
+        - { lambdaArn: !GetAtt [AccountRequestorLambda, Arn] }
+      RoleArn: !GetAtt [StatesExecutionRole, Arn]
+
+  SendEmailRole:
+    Type: AWS::IAM::Role
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      RoleName: SendEmailRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: SendEmailPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                  - ec2:*
+                Resource: '*'
+
+  AccountAutomationProcessorS3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+       BucketName: !Ref AccountAutomationProcessorS3BucketName
+      
+
+  GlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Ref AccountAutomationGlueJobName
+      Role: !Ref GlueJobRole
+      Command:
+        Name: pythonshell
+        PythonVersion: 3.9
+        # ScriptLocation: !Ref ScriptLocationAccm
+      DefaultArguments:
+        '--job-language': python
+        '--enable-metrics': ''
+        '--additional-python-modules': 'pgdb==0.0.11'
+      # Connections:
+      #   Connections:
+      #     - !Ref GlueDatabaseConnection
+      #     - !Ref GlueInfoHubDatabaseConnection
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+      GlueVersion: '1.0'
+      Timeout: 60
+
+  GlueJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [glue.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: GlueJobPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:*
+                  - glue:*
+                  - iam:*
+                  - secretsmanager:DescribeSecret
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:ListSecrets
+                  - kms:Decrypt
+                  - kms:DescribeKey
+                Resource: '*'
+  # GlueDatabaseConnection:
+  #   Type: AWS::Glue::Connection
+  #   Properties:
+  #     CatalogId: !Ref 'AWS::AccountId'
+  #     ConnectionInput:
+  #       Name: GlueDatabaseConnection
+  #       ConnectionType: JDBC
+  #       ConnectionProperties:
+  #         JDBC_CONNECTION_URL: !Sub 'jdbc:postgresql://{{resolve:secretsmanager:${DatabaseSecretName}:SecretString:host}}:{{resolve:secretsmanager:${DatabaseSecretName}:SecretString:port}}/{{resolve:secretsmanager:${DatabaseSecretName}:SecretString:dbname}}'
+  #         USERNAME: !Sub '{{resolve:secretsmanager:${DatabaseSecretName}:SecretString:username}}'
+  #         PASSWORD: !Sub '{{resolve:secretsmanager:${DatabaseSecretName}:SecretString:password}}'
+  #         JDBC_ENFORCE_SSL: 'true'
+  #       PhysicalConnectionRequirements:
+  #         AvailabilityZone: !Ref AvailabilityZone
+  #         SubnetId: !Ref Subnet1
+  #         SecurityGroupIdList:
+  #           - !Ref SecurityGroup1
+  #           - !Ref SecurityGroup2
+  #           - !Ref SecurityGroup3
+  #           - !Ref SecurityGroup4
+  # GlueInfoHubDatabaseConnection:
+  #   Type: AWS::Glue::Connection
+  #   Properties:
+  #     CatalogId: !Ref 'AWS::AccountId'
+  #     ConnectionInput:
+  #       Name: GlueInfoHubDatabaseConnection
+  #       ConnectionType: JDBC
+  #       ConnectionProperties:
+  #         JDBC_CONNECTION_URL: !Sub 'jdbc:postgresql://{{resolve:secretsmanager:${InfoHubDatabaseSecretName}:SecretString:host}}:{{resolve:secretsmanager:${InfoHubDatabaseSecretName}:SecretString:port}}/{{resolve:secretsmanager:${InfoHubDatabaseSecretName}:SecretString:dbname}}'
+  #         USERNAME: !Sub '{{resolve:secretsmanager:${InfoHubDatabaseSecretName}:SecretString:username}}'
+  #         PASSWORD: !Sub '{{resolve:secretsmanager:${InfoHubDatabaseSecretName}:SecretString:password}}'
+  #         JDBC_ENFORCE_SSL: 'true'
+  #       PhysicalConnectionRequirements:
+  #         AvailabilityZone: !Ref AvailabilityZone
+  #         SubnetId: !Ref Subnet1
+  #         SecurityGroupIdList:
+  #           - !Ref SecurityGroup1
+  OuterStepFunction:
+    Type: 'AWS::StepFunctions::StateMachine'
+    Properties:
+      StateMachineName: 'RulesProcessor'
+      DefinitionString:
+        Fn::Sub: |
+          {
+            "Comment": "Outer Step Function",
+            "StartAt": "InvokeInnerStepFunction",
+            "States": {
+              "InvokeInnerStepFunction": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::states:startExecution.sync",
+                "Parameters": {
+                  "StateMachineArn": "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${InnerStepFunction}",
+                  "Input": "{}"
+                },
+              "End": true
+              }
+            }
+          }
+      RoleArn: !GetAtt [StatesExecutionRole, Arn]
+  InnerStepFunction:
+    Type: 'AWS::StepFunctions::StateMachine'
+    Properties:
+      StateMachineName: 'VeevaProcessor'
+      DefinitionString:
+        Fn::Sub: |
+          {
+            "Comment": "Inner Step Function",
+            "StartAt": "InnerState",
+            "States": {
+              "InnerState": {
+                "Type": "Pass",
+                "Result": "Inner Step Function executed",
+                "End": true
+              }
+            }
+          }
+      RoleArn: !GetAtt [StatesExecutionRole, Arn]
