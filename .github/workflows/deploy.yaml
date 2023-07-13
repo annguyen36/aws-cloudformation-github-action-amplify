@@ -29,8 +29,8 @@ jobs:
     steps:
 #     - name: Run AWS SAM Build
 #       run: sam build --parallel --use-container --skip-pull-image --template-file template.yaml
-    - name: Run AWS SAM Package for CF deployment
-      run: sam package --template-file template.yaml --kms-key-id alias/aws/s3 --s3-bucket sam-test-need-delete-later  --output-template-file template.yaml
+#     - name: Run AWS SAM Package for CF deployment
+#       run: sam package --template-file template.yaml --kms-key-id alias/aws/s3 --s3-bucket sam-test-need-delete-later  --output-template-file template.yaml
     - name: Checkout
       uses: actions/checkout@v2
 
