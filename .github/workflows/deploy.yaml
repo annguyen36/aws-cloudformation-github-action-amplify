@@ -47,7 +47,7 @@ jobs:
         echo "Environment name: $ENVIRONMENT"
         echo "::set-output name=environment::$ENVIRONMENT"
     - name: Deploy Backend
-      run:  sam deploy --template-file sam-github.yaml --kms-key-id alias/aws/s3 --s3-bucket sam-test-need-delete-later --stack-name test-same-gh --no-fail-on-empty-changeset --capabilities  CAPABILITY_IAM CAPABILITY_AUTO_EXPAND CAPABILITY_NAMED_IAM
+      run:  sam deploy --template-file template.yaml --kms-key-id alias/aws/s3 --s3-bucket sam-test-need-delete-later --stack-name test-same-gh --no-fail-on-empty-changeset --capabilities  CAPABILITY_IAM CAPABILITY_AUTO_EXPAND CAPABILITY_NAMED_IAM
 
 #     - name: Deploy to Amplify Console with CloudFormation
 #       id: amplify-stack
