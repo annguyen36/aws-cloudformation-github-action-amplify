@@ -215,7 +215,7 @@ Resources:
   CirrusAuthenticators:
     Type: AWS::Serverless::Application
     Properties:
-      Location: https://lly-templates.s3.us-east-2.amazonaws.com/aws-authenticators/cloudformation/v5/v5.0.0.yaml
+      Location: https://an-aws-testing-files.s3.amazonaws.com/dummy-sam.yaml
       Parameters:
         LogLevel: WARN
         ApiAuthExpectedAudience: ''
